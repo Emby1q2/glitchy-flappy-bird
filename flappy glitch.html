@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>chaotic glitch flappy bird</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #111;
+    color: white;
+    font-family: Arial, sans-serif;
+    text-align: center;
+  }
+  #replayBar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+    background: #000;
+  }
+  #replayBar input {
+    flex: 1;
+    padding: 5px;
+  }
+  canvas {
+    display: block;
+    margin: 0 auto;
+    background: #222;
+    touch-action: none;
+  }
+  button {
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="replayBar">
+  <span>internet replays:</span>
+  <input id="replayLink" placeholder="paste replay url here">
+  <button id="viewReplay">view</button>
+  <button id="recordBtn">start recording</button>
+</div>
+
+<canvas id="game" width="400" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+let bird = {
+  x: 80,
+  y: 300,
+  r: 15,
+  vy: 0,
+  gravity: 0.6,
+  jump: -10
+};
+
+let pipes = [];
+let frame = 0;
+let score = 0;
+let gameOver = false;
+
+// recording
+let recording = false;
+let replayData = [];
+
+const recordBtn = document.getElementById("recordBtn");
+recordBtn.onclick = () => {
+  if (!recording) {
+    recording = true;
+    replayData = [];
+    recordBtn.textContent = "finish recording";
+  } else {
+    recording = false;
+    recordBtn.textContent = "start recording";
+    if (confirm("do you want to publish the recording?")) {
+      convertJsonToVideo(replayData);
+    }
+  }
+};
+
+// chaotic pipe generator
+function createPipe() {
+  const baseGap = 120 + Math.random() * 120;
+  const chaosOffset = (Math.random() - 0.5) * 120;
+
+  pipes.push({
+    x: canvas.width + Math.random() * 50,
+    top: Math.random() * 200 + 50,
+    gap: baseGap,
+    width: 40 + Math.random() * 60,
+    chaos: Math.random(),
+    flip: Math.random() < 0.1
+  });
+}
+
+// draw pipes with chaos
+function drawPipes() {
+  ctx.fillStyle = "lime";
+
+  pipes.forEach(p => {
+    // jitter
+    if (Math.random() < 0.3) p.x += (Math.random() - 0.5) * 20;
+    if (Math.random() < 0.3) p.top += (Math.random() - 0.5) * 30;
+
+    // teleport glitch
+    if (Math.random() < 0.01) p.x += (Math.random() - 0.5) * 200;
+
+    // width glitch
+    if (Math.random() < 0.05) p.width = 30 + Math.random() * 80;
+
+    let bottomY = p.top + p.gap;
+
+    // flip glitch
+    if (p.flip && Math.random() < 0.02) {
+      let temp = p.top;
+      p.top = canvas.height - bottomY;
+      p.gap = -p.gap;
+    }
+
+    ctx.fillRect(p.x, 0, p.width, p.top);
+    ctx.fillRect(
+      p.x,
+      bottomY,
+      p.width,
+      canvas.height - bottomY
+    );
+  });
+}
+
+function drawBird() {
+  ctx.fillStyle = "yellow";
+  ctx.beginPath();
+  ctx.arc(bird.x, bird.y, bird.r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function update() {
+  if (gameOver) return;
+
+  bird.vy += bird.gravity;
+  bird.y += bird.vy;
+
+  if (frame % 90 === 0) createPipe();
+
+  pipes.forEach(p => {
+    p.x -= 2 + Math.random() * 2;
+
+    // collision
+    if (
+      bird.x + bird.r > p.x &&
+      bird.x - bird.r < p.x + p.width &&
+      (bird.y - bird.r < p.top ||
+       bird.y + bird.r > p.top + p.gap)
+    ) {
+      gameOver = true;
+    }
+
+    if (!p.scored && p.x + p.width < bird.x) {
+      score++;
+      p.scored = true;
+    }
+  });
+
+  pipes = pipes.filter(p => p.x + p.width > -100);
+
+  if (bird.y > canvas.height || bird.y < 0) gameOver = true;
+
+  if (recording) {
+    replayData.push({
+      birdY: bird.y,
+      birdVY: bird.vy,
+      pipes: JSON.parse(JSON.stringify(pipes)),
+      score
+    });
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawBird();
+  drawPipes();
+
+  ctx.fillStyle = "white";
+  ctx.font = "20px Arial";
+  ctx.fillText("score: " + score, 10, 30);
+
+  if (gameOver) {
+    ctx.fillStyle = "red";
+    ctx.font = "40px Arial";
+    ctx.fillText("game over", 90, 300);
+    ctx.font = "18px Arial";
+    ctx.fillText("tap or refresh to restart", 80, 340);
+  }
+}
+
+function loop() {
+  frame++;
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function flap() {
+  if (!gameOver) bird.vy = bird.jump;
+}
+
+canvas.addEventListener("touchstart", e => {
+  e.preventDefault();
+  flap();
+});
+canvas.addEventListener("mousedown", flap);
+document.addEventListener("keydown", e => {
+  if (e.code === "Space") flap();
+});
+
+// replay bar
+document.getElementById("viewReplay").onclick = () => {
+  const url = document.getElementById("replayLink").value;
+  if (url) window.open(url, "_blank");
+};
+
+// json → video
+function convertJsonToVideo(data) {
+  const stream = canvas.captureStream(60);
+  const recorder = new MediaRecorder(stream);
+  const chunks = [];
+
+  recorder.ondataavailable = e => chunks.push(e.data);
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: "video/webm" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "flappy_replay.webm";
+    a.click();
+  };
+
+  recorder.start();
+  let i = 0;
+
+  function play() {
+    if (i >= data.length) {
+      recorder.stop();
+      return;
+    }
+
+    bird.y = data[i].birdY;
+    pipes = data[i].pipes;
+    score = data[i].score;
+
+    draw();
+    i++;
+    setTimeout(play, 1000 / 60);
+  }
+  play();
+}
+
+loop();
+</script>
+</body>
+</html>
